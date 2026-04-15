@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=1p1d_bench-serving    # Specify a custom string for your slurm batch job
+#SBATCH --job-name=sglang-disagg-serving    # Specify a custom string for your slurm batch job
 #SBATCH -N 3            # CHECK this to be right in batch jobs 
 #SBATCH -n 3          # CHECK this to be right in batch jobs
 #SBATCH --ntasks-per-node=1
@@ -19,6 +19,10 @@ echo "PST Time: $(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "======================="
 echo ""
 
+MORI_EP_VALID_MODELS=( \
+    "DeepSeek-R1" \
+)
+
 # Define valid model names
 VALID_MODELS=( \
     "Qwen3-32B" \
@@ -27,28 +31,45 @@ VALID_MODELS=( \
     "Llama-3.1-405B-Instruct-FP8-KV" \
     "amd-Llama-3.3-70B-Instruct-FP8-KV" \
     "DeepSeek-V3" \
+    "DeepSeek-R1" \
 )
 
+xP="${xP:-1}" #-> Number of Prefill Servers
+yD="${yD:-1}" #-> Number of Decode Servers
+MODEL_NAME="${MODEL_NAME:-None}"
+MODEL_DIR="${MODEL_DIR:-"/shared_inference/models_blog/"}"
 
-# Each model has an associated run file - Set it here
-declare -A MODEL_RUNFILES=(
-    ["Qwen3-32B"]="sglang_disagg_server.sh"
-    ["Mixtral-8x7B-v0.1"]="sglang_disagg_server.sh"
-    ["Llama-3.1-8B-Instruct"]="sglang_disagg_server.sh"
-    ["Llama-3.1-405B-Instruct-FP8-KV"]="sglang_disagg_server.sh"
-    ["amd-Llama-3.3-70B-Instruct-FP8-KV"]="sglang_disagg_server.sh"
-    ["DeepSeek-V3"]="sglang_disagg_server.sh"
-)
+model_allows_mori_ep() {
+    local m="$1"
+    for x in "${MORI_EP_VALID_MODELS[@]}"; do
+        [[ "$m" == "$x" ]] && return 0
+    done
+    return 1
+}
 
-# Check if MODEL_NAME exists and fetch runfile
-if [[ -n "${MODEL_RUNFILES[$MODEL_NAME]}" ]]; then
-    RUN_FILE="${MODEL_RUNFILES[$MODEL_NAME]}"
-    echo "Model found: $MODEL_NAME"
-    echo "Runfile set: $RUN_FILE"
+# ---------------------------------------------------------------------------
+# Run file: MoRI EP path when RUN_MORI=1, else default PD server script
+# ---------------------------------------------------------------------------
+_run_mori="${RUN_MORI:-0}"
+if [[ "$_run_mori" == "1" ]]; then
+    if model_allows_mori_ep "$MODEL_NAME"; then
+        RUN_FILE="sglang_disagg_mori_ep.sh"
+        echo "RUN_MORI=1: using $RUN_FILE for model '$MODEL_NAME'"
+    else
+        echo "Error: RUN_MORI=1 but MODEL_NAME '$MODEL_NAME' is not in MORI_EP_VALID_MODELS" >&2
+        printf "MoRI EP allowed models:\n" >&2
+        for m in "${MORI_EP_VALID_MODELS[@]}"; do
+            printf "  - %s\n" "$m" >&2
+        done
+        exit 1
+    fi
+    if [[ ! -f "$RUN_FILE" ]]; then
+        echo "Error: RUN_MORI=1 requires '$RUN_FILE' in $(pwd)." >&2
+        exit 1
+    fi
 else
-    echo "Error: Model '$MODEL_NAME' not found in MODEL_RUNFILES"
-    echo "Available models: ${!MODEL_RUNFILES[@]}"
-    exit 1
+    RUN_FILE="sglang_disagg_server.sh"
+    echo "RUN_MORI not set: using $RUN_FILE"
 fi
 
 export DOCKER_IMAGE_NAME="${DOCKER_IMAGE_NAME:-lmsysorg/sglang:v0.5.5.post3-rocm700-mi30x}"
@@ -60,12 +81,6 @@ fi
 # Set current directory to be REPO directory with all relevant scripts
 export MOONCAKE_REPO_DIR=$(pwd)
 LOG_PATH="${LOG_PATH:-/shared_inference/${USER}/model_blog_logs}"
-
-xP="${xP:-1}" #-> Number of Prefill Servers
-yD="${yD:-1}" #-> Number of Decode Servers
-
-MODEL_NAME="${MODEL_NAME:-None}"
-MODEL_DIR="${MODEL_DIR:-"/shared_inference/models_blog/"}"
 
 validate_model_name() {
   local is_valid_model=false
@@ -308,7 +323,6 @@ docker run --rm \
     --security-opt seccomp=unconfined \
     --privileged \
     -v $HOME:$HOME \
-    -v $HOME:$HOME \
     -v /shared_inference:/shared_inference \
     -v /mnt/m2m_nobackup:/mnt/m2m_nobackup \
     -v $HOME/.ssh:/root/.ssh \
@@ -330,7 +344,7 @@ docker run --rm \
     -e BENCHMARK_FILE=$BENCHMARK_FILE \
     -e IPADDRS=$IPADDRS \
     -e BENCHMARK_ITR=$BENCHMARK_ITR \
-    --ulimit nofile=65536:65536 \
+    --ulimit nofile=1048576:1048576 \
     --name $DOCKER_CONT_NAME \
     $DOCKER_IMAGE_NAME bash -c "
         mkdir -p /run_logs/${SLURM_JOB_ID}
