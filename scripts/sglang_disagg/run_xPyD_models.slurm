@@ -36,6 +36,7 @@ VALID_MODELS=( \
 
 xP="${xP:-1}" #-> Number of Prefill Servers
 yD="${yD:-1}" #-> Number of Decode Servers
+DP_MODE="${DP_MODE:-0}" #-> 1: pass DP/EP parallel flags to MoRI workers; 0: TP-only (see sglang_disagg_mori_io_ep.sh)
 MODEL_NAME="${MODEL_NAME:-None}"
 MODEL_DIR="${MODEL_DIR:-"/shared_inference/models_blog/"}"
 
@@ -183,8 +184,7 @@ echo ""
 
 # Calculate NUM_NODES based on xP and yD
 NUM_NODES=$((xP + yD + 1))
-echo "Calculated NUM_NODES: $NUM_NODES (xP=$xP + yD=$yD + 1)"
-echo "Calculated NUM_NODES: $NUM_NODES (xP=$xP + yD=$yD + 1)"
+echo "Calculated NUM_NODES: $NUM_NODES (xP=$xP + yD=$yD + 1) DP_MODE=$DP_MODE"
 
 # ------------------------
 # Extract first NUM_NODES from SLURM allocation and update SLURM variables
@@ -298,6 +298,7 @@ export MASTER_PORT=$MASTER_PORT
 export MODEL_PATH=$MODEL_PATH
 export xP=$xP
 export yD=$yD
+export DP_MODE=$DP_MODE
 export MODEL_NAME=$MODEL_NAME
 export USER_NAME=$USER_NAME
 export IPADDRS="$(echo "${IPS[*]}" | sed 's/ /,/g')"
@@ -339,6 +340,7 @@ docker run --rm \
     -e MOONCAKE_COOKBOOK_PATH=$MOONCAKE_COOKBOOK_PATH \
     -e xP=$xP \
     -e yD=$yD \
+    -e DP_MODE=$DP_MODE \
     -e USER_NAME=$USER_NAME \
     -e MODEL_NAME=$MODEL_NAME \
     -e BENCHMARK_FILE=$BENCHMARK_FILE \
