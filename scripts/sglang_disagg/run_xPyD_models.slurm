@@ -36,7 +36,9 @@ VALID_MODELS=( \
 
 xP="${xP:-1}" #-> Number of Prefill Servers
 yD="${yD:-1}" #-> Number of Decode Servers
-DP_MODE="${DP_MODE:-0}" #-> 1: pass DP/EP parallel flags to MoRI workers; 0: TP-only (see sglang_disagg_mori_io_ep.sh)
+# DP_MODE is read only by sglang_disagg_mori_io_ep.sh (YAML tp vs dp via PARALLEL_MODE; mori_ep ignores it).
+DP_MODE="${DP_MODE:-0}" #-> mori_io_ep: 1=dp flags + --dp-size/--ep-size; 0=tp flags, omit dp/ep CLI flags
+MORI_SHMEM_HEAP_SIZE="${MORI_SHMEM_HEAP_SIZE:-16G}" #-> mori symmetric heap (multi-node MoE often needs 16G+)
 MODEL_NAME="${MODEL_NAME:-None}"
 MODEL_DIR="${MODEL_DIR:-"/shared_inference/models_blog/"}"
 
@@ -54,7 +56,7 @@ model_allows_mori_ep() {
 _run_mori="${RUN_MORI:-0}"
 if [[ "$_run_mori" == "1" ]]; then
     if model_allows_mori_ep "$MODEL_NAME"; then
-        RUN_FILE="sglang_disagg_mori_ep.sh"
+        RUN_FILE="sglang_disagg_mori_io_ep.sh"
         echo "RUN_MORI=1: using $RUN_FILE for model '$MODEL_NAME'"
     else
         echo "Error: RUN_MORI=1 but MODEL_NAME '$MODEL_NAME' is not in MORI_EP_VALID_MODELS" >&2
@@ -184,7 +186,7 @@ echo ""
 
 # Calculate NUM_NODES based on xP and yD
 NUM_NODES=$((xP + yD + 1))
-echo "Calculated NUM_NODES: $NUM_NODES (xP=$xP + yD=$yD + 1) DP_MODE=$DP_MODE"
+echo "Calculated NUM_NODES: $NUM_NODES (xP=$xP + yD=$yD + 1) DP_MODE=$DP_MODE MORI_SHMEM_HEAP_SIZE=$MORI_SHMEM_HEAP_SIZE"
 
 # ------------------------
 # Extract first NUM_NODES from SLURM allocation and update SLURM variables
@@ -299,6 +301,7 @@ export MODEL_PATH=$MODEL_PATH
 export xP=$xP
 export yD=$yD
 export DP_MODE=$DP_MODE
+export MORI_SHMEM_HEAP_SIZE=$MORI_SHMEM_HEAP_SIZE
 export MODEL_NAME=$MODEL_NAME
 export USER_NAME=$USER_NAME
 export IPADDRS="$(echo "${IPS[*]}" | sed 's/ /,/g')"
@@ -341,6 +344,7 @@ docker run --rm \
     -e xP=$xP \
     -e yD=$yD \
     -e DP_MODE=$DP_MODE \
+    -e MORI_SHMEM_HEAP_SIZE=$MORI_SHMEM_HEAP_SIZE \
     -e USER_NAME=$USER_NAME \
     -e MODEL_NAME=$MODEL_NAME \
     -e BENCHMARK_FILE=$BENCHMARK_FILE \
@@ -348,7 +352,8 @@ docker run --rm \
     -e BENCHMARK_ITR=$BENCHMARK_ITR \
     --ulimit nofile=1048576:1048576 \
     --name $DOCKER_CONT_NAME \
-    $DOCKER_IMAGE_NAME bash -c "
+    --entrypoint /bin/bash \
+    $DOCKER_IMAGE_NAME -c "
         mkdir -p /run_logs/${SLURM_JOB_ID}
         $RUN_FILE_FULL 2>&1 | tee /run_logs/${SLURM_JOB_ID}/pd_sglang_bench_serving.sh_NODE${SLURM_PROCID}.log
     "
